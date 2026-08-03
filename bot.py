@@ -32,8 +32,7 @@ RSS_FEEDS = [
     'https://www.5-tv.ru/news/rss/',
     'http://news.mail.ru/rss/',
     'http://vz.ru/rss.xml',
-    'http://www.ria.ru/export/rss2/index.xml',
-    'http://tass.ru/rss/v2.xml?sections=MjU%3D'
+    'http://www.ria.ru/export/rss2/index.xml'
 ]
 
 # ===== Функции бота =====
