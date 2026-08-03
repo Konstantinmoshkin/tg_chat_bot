@@ -6,11 +6,22 @@ from urllib import request
 from datetime import datetime
 import sys
 import time
+import threading
+from flask import Flask, render_template_string
 
-TOKEN = os.environ['TOKEN']
-API_KEY = os.environ['API_KEY']
+# ===== Конфигурация =====
+TOKEN = os.environ.get('TOKEN')
+API_KEY = os.environ.get('API_KEY')
 CHAT_ID = os.environ.get('CHAT_ID')
 
+if not TOKEN or not API_KEY:
+    print("❌ ERROR: TOKEN and API_KEY must be set in environment variables")
+    sys.exit(1)
+
+# ===== Flask приложение для Render =====
+app = Flask(__name__)
+
+# ===== RSS источники =====
 RSS_FEEDS = [
     'https://lenta.ru/rss/news',
     'https://www.vedomosti.ru/rss/news.xml',
@@ -26,6 +37,7 @@ RSS_FEEDS = [
     'http://tass.ru/rss/v2.xml?sections=MjU%3D'
 ]
 
+# ===== Функции бота =====
 def send_telegram_message(chat_id, text, parse_mode='HTML'):
     """Отправка сообщения через urllib"""
     try:
@@ -121,8 +133,40 @@ def parse_rss(xml_url):
     
     return items
 
+def process_ai_response(response):
+    """Пост-обработка ответа AI"""
+    if response == 'нет':
+        return 'нет'
+
+    if '|' in response:
+        filtered_parts = []
+        reject_patterns = [
+            'встретил', 'пообщалс', 'провёл', 'провел', 'заявил', 'сообщил',
+            'рассказал', 'посетил', 'открыл', 'осмотрел', 'выступил',
+            'поздравил', 'вручил', 'прокомментировал', 'атака', 'бпла',
+            'пожар', 'наводнение', 'футбол', 'тренер', 'больница', 'операц'
+        ]
+        accept_keywords = [
+            'отставк', 'назначен', 'покинул', 'сложил', 'вступил', 'возглавил',
+            'освобождён', 'освобожден', 'отстранён', 'отстранен', 'скончался',
+            'умер', 'переизбран', 'переназначен', 'избран', 'утверждён',
+            'утвержден', 'сменил', 'переведён', 'переведен', 'заявление', 'прошение'
+        ]
+        for part in response.split(';'):
+            part_lower = part.lower()
+            has_accept = any(word in part_lower for word in accept_keywords)
+            has_reject = any(word in part_lower for word in reject_patterns)
+            if has_accept and not has_reject:
+                filtered_parts.append(part.strip())
+        if filtered_parts:
+            return ' ; '.join(filtered_parts)
+        else:
+            return 'нет'
+    else:
+        return response
+
 def call_ai(news_items):
-    """Вызов OpenRouter с перебором прокси"""
+    """Вызов OpenRouter"""
     if not news_items:
         return ""
 
@@ -228,38 +272,6 @@ def call_ai(news_items):
     print("❌ All connection methods failed")
     return "нет"
 
-def process_ai_response(response):
-    """Пост-обработка ответа AI"""
-    if response == 'нет':
-        return 'нет'
-
-    if '|' in response:
-        filtered_parts = []
-        reject_patterns = [
-            'встретил', 'пообщалс', 'провёл', 'провел', 'заявил', 'сообщил',
-            'рассказал', 'посетил', 'открыл', 'осмотрел', 'выступил',
-            'поздравил', 'вручил', 'прокомментировал', 'атака', 'бпла',
-            'пожар', 'наводнение', 'футбол', 'тренер', 'больница', 'операц'
-        ]
-        accept_keywords = [
-            'отставк', 'назначен', 'покинул', 'сложил', 'вступил', 'возглавил',
-            'освобождён', 'освобожден', 'отстранён', 'отстранен', 'скончался',
-            'умер', 'переизбран', 'переназначен', 'избран', 'утверждён',
-            'утвержден', 'сменил', 'переведён', 'переведен', 'заявление', 'прошение'
-        ]
-        for part in response.split(';'):
-            part_lower = part.lower()
-            has_accept = any(word in part_lower for word in accept_keywords)
-            has_reject = any(word in part_lower for word in reject_patterns)
-            if has_accept and not has_reject:
-                filtered_parts.append(part.strip())
-        if filtered_parts:
-            return ' ; '.join(filtered_parts)
-        else:
-            return 'нет'
-    else:
-        return response
-
 def format_news_beautiful(ai_response, news_items):
     """Красивое форматирование новостей"""
     now = datetime.now()
@@ -353,7 +365,8 @@ def send_daily_report():
         "📰 <b>СВОДКА КАДРОВЫХ ИЗМЕНЕНИЙ ГУБЕРНАТОРОВ</b>",
         "🌅 <b>ЕЖЕДНЕВНАЯ СВОДКА КАДРОВЫХ ИЗМЕНЕНИЙ ГУБЕРНАТОРОВ</b>"
     )
-    send_telegram_message(CHAT_ID, result)
+    if CHAT_ID:
+        send_telegram_message(CHAT_ID, result)
     print("✅ Daily report sent!")
 
 def get_updates(offset=None):
@@ -370,7 +383,7 @@ def get_updates(offset=None):
         return None
 
 def process_updates():
-    """Обработка команд в личных сообщениях (для отладки)"""
+    """Обработка команд в личных сообщениях"""
     last_update_id = 0
     
     print("🤖 Bot started. Listening for commands...")
@@ -390,7 +403,6 @@ def process_updates():
                         chat_type = msg['chat'].get('type', 'private')
                         text = msg.get('text', '')
                         
-                        # ✅ Отвечаем ТОЛЬКО в личные сообщения
                         if chat_type == 'private':
                             print(f"📩 Private message: {text} from {chat_id}")
                             
@@ -423,7 +435,6 @@ def process_updates():
                                     "/chatid — показать ID чата"
                                 )
                         else:
-                            # Групповые сообщения логируем, но не отвечаем
                             print(f"📢 Group message (ignored): {text[:50]} from {chat_id}")
             
             time.sleep(2)
@@ -432,12 +443,85 @@ def process_updates():
             print(f"Process error: {e}")
             time.sleep(5)
 
-# ===== Точка входа =====
+# ===== Flask веб-сервер для Render =====
+@app.route('/')
+def index():
+    """Страница-заглушка чтобы Render видел открытый порт"""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Governor News Bot</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 800px;
+                margin: 50px auto;
+                padding: 20px;
+                background: #f0f0f0;
+            }
+            .container {
+                background: white;
+                padding: 30px;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }
+            h1 { color: #2c3e50; }
+            .status { color: #27ae60; font-weight: bold; }
+            .commands {
+                background: #f8f9fa;
+                padding: 15px;
+                border-radius: 5px;
+                font-family: monospace;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🤖 Governor News Bot</h1>
+            <p>Status: <span class="status">✅ Running</span></p>
+            <p>Бот активен и слушает команды в Telegram.</p>
+            <h3>Доступные команды:</h3>
+            <div class="commands">
+                /start — приветствие<br>
+                /analyse — получить сводку новостей<br>
+                /test — проверить работу<br>
+                /chatid — показать ID чата
+            </div>
+            <p style="margin-top: 20px; color: #7f8c8d; font-size: 14px;">
+                Последний пинг: {{ now }}
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+    return render_template_string(html, now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+@app.route('/ping')
+def ping():
+    """Эндпоинт для keep-alive пинга"""
+    return "OK", 200
+
+# ===== Главная функция =====
+def start_bot():
+    """Запускает бота в отдельном потоке"""
+    try:
+        process_updates()
+    except Exception as e:
+        print(f"Bot thread error: {e}")
 
 if __name__ == "__main__":
+    # Проверяем аргументы командной строки
     if len(sys.argv) > 1 and sys.argv[1] == "daily":
-        # Режим ежедневной рассылки в группу
+        # Режим ежедневной рассылки
         send_daily_report()
     else:
-        # Режим бота - обработка команд в ЛС (для отладки)
-        process_updates()
+        # Запускаем бота в отдельном потоке
+        bot_thread = threading.Thread(target=start_bot, daemon=True)
+        bot_thread.start()
+        print("✅ Bot thread started")
+        
+        # Запускаем Flask веб-сервер
+        port = int(os.environ.get("PORT", 10000))
+        print(f"🌐 Starting web server on port {port}")
+        app.run(host='0.0.0.0', port=port)
