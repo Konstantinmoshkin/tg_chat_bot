@@ -88,9 +88,14 @@ def parse_rss(xml_url):
         print(f"Fetching: {xml_url}")
         content = fetch_url(xml_url)
         if not content:
+            print(f"⚠️ No content from {xml_url}")
             return items
         
-        root = ET.fromstring(content)
+        try:
+            root = ET.fromstring(content)
+        except ET.ParseError as e:
+            print(f"❌ XML Parse error {xml_url}: {e}")
+            return items
         
         def find_in_tree(tag, element=None):
             if element is None:
@@ -278,8 +283,61 @@ def call_ai(news_items):
                 except Exception as proxy_error:
                     print(f"❌ Proxy failed: {proxy_error}")
 
-    print("❌ All connection methods failed")
+    print("❌ All connection methods failed, returning 'нет'")
     return "нет"
+
+def format_news_beautiful(ai_response, news_items):
+    """Красивое форматирование новостей"""
+    now = datetime.now()
+    date_str = now.strftime("%d.%m.%Y")
+    
+    header = (
+        f"📰 <b>СВОДКА КАДРОВЫХ ИЗМЕНЕНИЙ ГУБЕРНАТОРОВ</b>\n"
+        f"📅 {date_str}\n"
+        f"{'—' * 15}\n\n"
+    )
+
+    header_nonews = (
+        f"📰 <b>❌ Новостей о кадровых изменениях губернаторов не найдено</b>\n"
+        f"{'—' * 15}\n\n"
+        f"📅 {date_str}\n"
+    )
+    
+    if ai_response and ai_response != 'нет' and '|' in ai_response:
+        parts = [p.strip() for p in ai_response.split(';') if p.strip() and '|' in p]
+        news_blocks = []
+        
+        for p in parts[:10]:
+            chunks = p.split('|')
+            if len(chunks) >= 3:
+                region = chunks[0].strip()
+                event = chunks[1].strip()
+                link = chunks[2].strip()
+                
+                event_lower = event.lower()
+                if any(w in event_lower for w in ['отставк', 'покинул', 'сложил', 'ушел', 'ушёл']):
+                    emoji = "🔄"
+                elif any(w in event_lower for w in ['назначен', 'вступил', 'возглавил', 'утверждён', 'утвержден']):
+                    emoji = "✅"
+                elif any(w in event_lower for w in ['скончался', 'смерть', 'умер']):
+                    emoji = "🕯"
+                elif any(w in event_lower for w in ['отстранён', 'отстранен']):
+                    emoji = "⚠️"
+                else:
+                    emoji = "📌"
+                
+                block = (
+                    f"{emoji} <b>Регион:</b> {region}\n"
+                    f"   <b>Событие:</b> {event}\n"
+                    f"   <b>Ссылка:</b> {link}\n"
+                    f"{'—' * 15}"
+                )
+                news_blocks.append(block)
+        
+        if news_blocks:
+            return header + "\n\n".join(news_blocks)
+    
+    return header_nonews
 
 def run_analysis():
     """Основная функция анализа"""
@@ -289,10 +347,14 @@ def run_analysis():
     success_sources = 0
     
     for feed in RSS_FEEDS:
-        items = parse_rss(feed)
-        if items:
-            success_sources += 1
-        all_news.extend(items)
+        try:
+            items = parse_rss(feed)
+            if items:
+                success_sources += 1
+            all_news.extend(items)
+        except Exception as e:
+            print(f"❌ Source {feed} crashed: {e}")
+            continue
     
     print(f"Total relevant news: {len(all_news)} from {success_sources} sources")
     
@@ -308,9 +370,11 @@ def run_analysis():
     filtered = list(unique.values())
     print(f"After dedup: {len(filtered)}")
     
+    print("🤖 Calling AI...")
     ai_result = call_ai(filtered[:15])
-    result = format_news_beautiful(ai_result, filtered)
+    print(f"🤖 AI result: {ai_result[:100] if ai_result else 'empty'}")
     
+    result = format_news_beautiful(ai_result, filtered)
     return result
 
 def send_daily_report():
@@ -344,7 +408,6 @@ def process_updates():
     
     print("🤖 Bot started. Listening for commands...")
     print("Commands in private chat: /start, /analyse, /test, /chatid")
-    print("Daily reports will still be sent to groups as scheduled")
     
     while True:
         try:
@@ -377,8 +440,13 @@ def process_updates():
                                 send_telegram_message(chat_id, "✅ Бот работает!")
                             elif text == '/analyse':
                                 send_telegram_message(chat_id, "⏳ <b>Анализирую новости из 12 источников...</b>")
-                                result = run_analysis()
-                                send_telegram_message(chat_id, result)
+                                try:
+                                    result = run_analysis()
+                                    send_telegram_message(chat_id, result)
+                                except Exception as e:
+                                    error_msg = f"❌ Ошибка: {str(e)}"
+                                    send_telegram_message(chat_id, error_msg)
+                                    print(f"❌ Analysis error: {e}")
                             elif text == '/chatid':
                                 send_telegram_message(chat_id, f"ID чата: <code>{chat_id}</code>")
                             else:
