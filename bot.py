@@ -170,59 +170,72 @@ def process_ai_response(response):
 
 def call_ai(news_items):
     """Вызов OpenRouter с перебором прокси"""
+    print("🔵 [call_ai] START")
+    
     if not news_items:
         print("❌ No news items to analyze")
         return ""
 
     print(f"📊 Analyzing {len(news_items)} news items with AI...")
     
-    news_text = ""
-    for i, item in enumerate(news_items[:15]):
-        news_text += f"Новость {i+1}: {item['title']}. {item['desc'][:200]} (ссылка: {item['link']})\n"
-    
-    prompt = (
-        "Ты строгий фильтр новостей. Оставь ТОЛЬКО новости о КАДРОВЫХ ИЗМЕНЕНИЯХ губернаторов РФ.\n\n"
-        "⚠️ КАДРОВОЕ ИЗМЕНЕНИЕ — это когда губернатор:\n"
-        "- подал в отставку / покинул пост / сложил полномочия\n"
-        "- был назначен / утверждён / вступил в должность\n"
-        "- был освобождён от должности / отстранён\n"
-        "- переизбран / переназначен на новый срок\n"
-        "- скончался / умер\n"
-        "- переведён на другую должность (полпред, министр, посол)\n"
-        "- написал заявление об отставке\n"
-        "- объявил о досрочном сложении полномочий\n\n"
-        "❌ НЕ ЯВЛЯЮТСЯ кадровыми изменениями (ИГНОРИРУЙ такие новости):\n"
-        "- встреча / разговор / переговоры Путина с губернатором\n"
-        "- губернатор пообщался / провёл совещание / сделал заявление\n"
-        "- губернатор посетил / открыл / осмотрел / выступил\n"
-        "- губернатор сообщил / рассказал / прокомментировал\n"
-        "- губернатор поздравил / вручил награды\n"
-        "- любые новости не о губернаторах (футбол, больницы, экономика)\n"
-        "- новости о вице-губернаторах, министрах, депутатах, мэрах\n\n"
-        "Правила отбора:\n"
-        "1. В новости ДОЛЖНО быть явное указание на СМЕНУ статуса губернатора\n"
-        "2. Слова 'назначен', 'отставка', 'освобождён', 'вступил' — пропускаем\n"
-        "3. Слова 'встретился', 'пообщался', 'провёл', 'заявил' — отклоняем\n"
-        "4. Если сомневаешься — НЕ ВКЛЮЧАЙ\n\n"
-        "Для каждой отобранной новости укажи:\n"
-        "Регион | событие (с ФИО и должностью) | ссылка\n\n"
-        "Примеры ПРАВИЛЬНЫХ ответов:\n"
-        "Саратовская область | губернатор Роман Бусаргин подал в отставку | https://example.com\n"
-        "Архангельская область | Александр Цыбульский назначен врио губернатора | https://example.com\n\n"
-        "Если НЕТ ни одной новости о кадровых изменениях — напиши 'нет'\n\n"
-        "Разделяй новости через ;\n\n"
-        f"{news_text}"
-    )
-
-    # Пробуем прямой доступ
+    # --- Формируем промпт ---
     try:
-        print("🌐 Trying direct access to OpenRouter...")
+        print("🔵 Формирую промпт...")
+        news_text = ""
+        for i, item in enumerate(news_items[:15]):
+            news_text += f"Новость {i+1}: {item['title']}. {item['desc'][:200]} (ссылка: {item['link']})\n"
+        
+        prompt = (
+            "Ты строгий фильтр новостей. Оставь ТОЛЬКО новости о КАДРОВЫХ ИЗМЕНЕНИЯХ губернаторов РФ.\n\n"
+            "⚠️ КАДРОВОЕ ИЗМЕНЕНИЕ — это когда губернатор:\n"
+            "- подал в отставку / покинул пост / сложил полномочия\n"
+            "- был назначен / утверждён / вступил в должность\n"
+            "- был освобождён от должности / отстранён\n"
+            "- переизбран / переназначен на новый срок\n"
+            "- скончался / умер\n"
+            "- переведён на другую должность (полпред, министр, посол)\n"
+            "- написал заявление об отставке\n"
+            "- объявил о досрочном сложении полномочий\n\n"
+            "❌ НЕ ЯВЛЯЮТСЯ кадровыми изменениями (ИГНОРИРУЙ такие новости):\n"
+            "- встреча / разговор / переговоры Путина с губернатором\n"
+            "- губернатор пообщался / провёл совещание / сделал заявление\n"
+            "- губернатор посетил / открыл / осмотрел / выступил\n"
+            "- губернатор сообщил / рассказал / прокомментировал\n"
+            "- губернатор поздравил / вручил награды\n"
+            "- любые новости не о губернаторах (футбол, больницы, экономика)\n"
+            "- новости о вице-губернаторах, министрах, депутатах, мэрах\n\n"
+            "Правила отбора:\n"
+            "1. В новости ДОЛЖНО быть явное указание на СМЕНУ статуса губернатора\n"
+            "2. Слова 'назначен', 'отставка', 'освобождён', 'вступил' — пропускаем\n"
+            "3. Слова 'встретился', 'пообщался', 'провёл', 'заявил' — отклоняем\n"
+            "4. Если сомневаешься — НЕ ВКЛЮЧАЙ\n\n"
+            "Для каждой отобранной новости укажи:\n"
+            "Регион | событие (с ФИО и должностью) | ссылка\n\n"
+            "Примеры ПРАВИЛЬНЫХ ответов:\n"
+            "Саратовская область | губернатор Роман Бусаргин подал в отставку | https://example.com\n"
+            "Архангельская область | Александр Цыбульский назначен врио губернатора | https://example.com\n\n"
+            "Если НЕТ ни одной новости о кадровых изменениях — напиши 'нет'\n\n"
+            "Разделяй новости через ;\n\n"
+            f"{news_text}"
+        )
+        print(f"✅ Промпт сформирован, длина: {len(prompt)} символов")
+    except Exception as e:
+        print(f"❌ Ошибка при формировании промпта: {e}")
+        import traceback
+        traceback.print_exc()
+        return "нет"
+
+    # --- Пробуем прямой доступ ---
+    try:
+        print("🌐 [1] Trying direct access to OpenRouter...")
+        
         data = json.dumps({
             "model": "google/gemma-4-26b-a4b-it:free",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 800,
             "temperature": 0
         }).encode('utf-8')
+        print(f"✅ JSON сформирован, размер: {len(data)} байт")
         
         req = request.Request(
             "https://openrouter.ai/api/v1/chat/completions",
@@ -232,26 +245,33 @@ def call_ai(news_items):
                 "Content-Type": "application/json"
             }
         )
-        print("⏳ Waiting for OpenRouter response...")
+        print("⏳ Отправляю запрос к OpenRouter (таймаут 45 сек)...")
+        
         with request.urlopen(req, timeout=45) as resp:
+            print(f"✅ Получен ответ, статус: {resp.status}")
             result = json.loads(resp.read().decode('utf-8'))
-            print("✅ Got response from OpenRouter")
+            print("✅ JSON ответа распарсен")
+            
             if result and "choices" in result:
                 response = result["choices"][0]["message"]["content"].strip()
-                print(f"📝 AI response: {response[:100]}...")
+                print(f"📝 AI ответ: {response[:100]}...")
                 return process_ai_response(response)
             else:
-                print("❌ No choices in OpenRouter response")
+                print("❌ Нет choices в ответе OpenRouter")
+                print(f"   Ответ: {str(result)[:200]}")
+                
     except Exception as e:
-        print(f"❌ Direct access failed: {str(e)}")
+        error_msg = str(e)
+        print(f"❌ [1] Direct access failed: {error_msg}")
         
         # Если ошибка 403 — пробуем прокси
-        if "403" in str(e):
-            print("🔄 403 Forbidden, trying proxy...")
+        if "403" in error_msg:
+            print("🔄 [2] 403 Forbidden, пробую прокси...")
             user_proxy = os.environ.get('PROXY_URL', '').strip()
             if user_proxy:
                 try:
-                    print(f"🌐 Trying proxy: {user_proxy}")
+                    print(f"🌐 [3] Trying proxy: {user_proxy}")
+                    
                     data = json.dumps({
                         "model": "google/gemma-4-26b-a4b-it:free",
                         "messages": [{"role": "user", "content": prompt}],
@@ -272,16 +292,22 @@ def call_ai(news_items):
                             "Content-Type": "application/json"
                         }
                     )
+                    print("⏳ Отправляю через прокси...")
                     with opener.open(req, timeout=45) as resp:
+                        print(f"✅ Получен ответ через прокси, статус: {resp.status}")
                         result = json.loads(resp.read().decode('utf-8'))
                         if result and "choices" in result:
                             response = result["choices"][0]["message"]["content"].strip()
                             print(f"✅ Success with proxy: {user_proxy}")
                             return process_ai_response(response)
                 except Exception as proxy_error:
-                    print(f"❌ Proxy failed: {proxy_error}")
+                    print(f"❌ [3] Proxy failed: {proxy_error}")
+            else:
+                print("❌ [2] PROXY_URL не задан в переменных окружения")
+        else:
+            print(f"❌ [2] Другая ошибка, прокси не пробую")
 
-    print("❌ All connection methods failed, returning 'нет'")
+    print("❌ Все методы подключения не сработали")
     return "нет"
 
 def format_news_beautiful(ai_response, news_items):
