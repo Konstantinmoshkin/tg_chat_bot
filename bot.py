@@ -166,10 +166,13 @@ def process_ai_response(response):
         return response
 
 def call_ai(news_items):
-    """Вызов OpenRouter"""
+    """Вызов OpenRouter с перебором прокси"""
     if not news_items:
+        print("❌ No news items to analyze")
         return ""
 
+    print(f"📊 Analyzing {len(news_items)} news items with AI...")
+    
     news_text = ""
     for i, item in enumerate(news_items[:15]):
         news_text += f"Новость {i+1}: {item['title']}. {item['desc'][:200]} (ссылка: {item['link']})\n"
@@ -210,7 +213,7 @@ def call_ai(news_items):
 
     # Пробуем прямой доступ
     try:
-        print("Trying direct access to OpenRouter...")
+        print("🌐 Trying direct access to OpenRouter...")
         data = json.dumps({
             "model": "google/gemma-4-26b-a4b-it:free",
             "messages": [{"role": "user", "content": prompt}],
@@ -226,104 +229,57 @@ def call_ai(news_items):
                 "Content-Type": "application/json"
             }
         )
+        print("⏳ Waiting for OpenRouter response...")
         with request.urlopen(req, timeout=45) as resp:
             result = json.loads(resp.read().decode('utf-8'))
+            print("✅ Got response from OpenRouter")
             if result and "choices" in result:
                 response = result["choices"][0]["message"]["content"].strip()
-                print("✅ Direct access successful!")
+                print(f"📝 AI response: {response[:100]}...")
                 return process_ai_response(response)
+            else:
+                print("❌ No choices in OpenRouter response")
     except Exception as e:
-        print(f"Direct access failed: {str(e)[:100]}")
-
-    # Если прямой доступ не работает - пробуем прокси из переменной
-    user_proxy = os.environ.get('PROXY_URL', '').strip()
-    if user_proxy:
-        try:
-            print(f"Trying proxy: {user_proxy}")
-            data = json.dumps({
-                "model": "google/gemma-4-26b-a4b-it:free",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 800,
-                "temperature": 0
-            }).encode('utf-8')
-            
-            proxy_handler = request.ProxyHandler({
-                'https': user_proxy,
-                'http': user_proxy
-            })
-            opener = request.build_opener(proxy_handler)
-            req = request.Request(
-                "https://openrouter.ai/api/v1/chat/completions",
-                data=data,
-                headers={
-                    "Authorization": f"Bearer {API_KEY}",
-                    "Content-Type": "application/json"
-                }
-            )
-            with opener.open(req, timeout=45) as resp:
-                result = json.loads(resp.read().decode('utf-8'))
-                if result and "choices" in result:
-                    response = result["choices"][0]["message"]["content"].strip()
-                    print(f"✅ Success with proxy: {user_proxy}")
-                    return process_ai_response(response)
-        except Exception as e:
-            print(f"Proxy failed: {str(e)[:100]}")
+        print(f"❌ Direct access failed: {str(e)}")
+        
+        # Если ошибка 403 — пробуем прокси
+        if "403" in str(e):
+            print("🔄 403 Forbidden, trying proxy...")
+            user_proxy = os.environ.get('PROXY_URL', '').strip()
+            if user_proxy:
+                try:
+                    print(f"🌐 Trying proxy: {user_proxy}")
+                    data = json.dumps({
+                        "model": "google/gemma-4-26b-a4b-it:free",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 800,
+                        "temperature": 0
+                    }).encode('utf-8')
+                    
+                    proxy_handler = request.ProxyHandler({
+                        'https': user_proxy,
+                        'http': user_proxy
+                    })
+                    opener = request.build_opener(proxy_handler)
+                    req = request.Request(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        data=data,
+                        headers={
+                            "Authorization": f"Bearer {API_KEY}",
+                            "Content-Type": "application/json"
+                        }
+                    )
+                    with opener.open(req, timeout=45) as resp:
+                        result = json.loads(resp.read().decode('utf-8'))
+                        if result and "choices" in result:
+                            response = result["choices"][0]["message"]["content"].strip()
+                            print(f"✅ Success with proxy: {user_proxy}")
+                            return process_ai_response(response)
+                except Exception as proxy_error:
+                    print(f"❌ Proxy failed: {proxy_error}")
 
     print("❌ All connection methods failed")
     return "нет"
-
-def format_news_beautiful(ai_response, news_items):
-    """Красивое форматирование новостей"""
-    now = datetime.now()
-    date_str = now.strftime("%d.%m.%Y")
-    
-    header = (
-        f"📰 <b>СВОДКА КАДРОВЫХ ИЗМЕНЕНИЙ ГУБЕРНАТОРОВ</b>\n"
-        f"📅 {date_str}\n"
-        f"{'—' * 15}\n\n"
-    )
-
-    header_nonews = (
-        f"📰 <b>❌ Новостей о кадровых изменениях губернаторов не найдено</b>\n"
-        f"{'—' * 15}\n\n"
-        f"📅 {date_str}\n"
-    )
-    
-    if ai_response and ai_response != 'нет' and '|' in ai_response:
-        parts = [p.strip() for p in ai_response.split(';') if p.strip() and '|' in p]
-        news_blocks = []
-        
-        for p in parts[:10]:
-            chunks = p.split('|')
-            if len(chunks) >= 3:
-                region = chunks[0].strip()
-                event = chunks[1].strip()
-                link = chunks[2].strip()
-                
-                event_lower = event.lower()
-                if any(w in event_lower for w in ['отставк', 'покинул', 'сложил', 'ушел', 'ушёл']):
-                    emoji = "🔄"
-                elif any(w in event_lower for w in ['назначен', 'вступил', 'возглавил', 'утверждён', 'утвержден']):
-                    emoji = "✅"
-                elif any(w in event_lower for w in ['скончался', 'смерть', 'умер']):
-                    emoji = "🕯"
-                elif any(w in event_lower for w in ['отстранён', 'отстранен']):
-                    emoji = "⚠️"
-                else:
-                    emoji = "📌"
-                
-                block = (
-                    f"{emoji} <b>Регион:</b> {region}\n"
-                    f"   <b>Событие:</b> {event}\n"
-                    f"   <b>Ссылка:</b> {link}\n"
-                    f"{'—' * 15}"
-                )
-                news_blocks.append(block)
-        
-        if news_blocks:
-            return header + "\n\n".join(news_blocks)
-    
-    return header_nonews
 
 def run_analysis():
     """Основная функция анализа"""
