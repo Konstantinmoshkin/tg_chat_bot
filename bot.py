@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 from urllib import request
 from datetime import datetime
 import sys
+import time
 
 TOKEN = os.environ['TOKEN']
 API_KEY = os.environ['API_KEY']
@@ -163,38 +164,16 @@ def call_ai(news_items):
         f"{news_text}"
     )
 
-    user_proxy = os.environ.get('PROXY_URL', '').strip()
-    
-    proxy_list = [
-        'http://103.152.112.120:80',
-        'http://45.146.235.33:80',
-        'http://20.111.54.16:3128',
-        'http://51.89.25.140:3128',
-        'http://68.71.249.153:48606',
-        'http://103.169.142.181:80',
-        'http://103.214.123.86:80',
-        'http://103.118.46.250:80',
-        'http://103.147.234.172:80',
-        'http://103.147.233.53:80',
-    ]
-    
-    if user_proxy:
-        proxy_list = [user_proxy] + proxy_list
-
-    def try_request(proxy_url):
+    # Пробуем прямой доступ
+    try:
+        print("Trying direct access to OpenRouter...")
         data = json.dumps({
             "model": "google/gemma-4-26b-a4b-it:free",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 800,
             "temperature": 0
         }).encode('utf-8')
-
-        proxy_handler = request.ProxyHandler({
-            'https': proxy_url,
-            'http': proxy_url
-        })
-        opener = request.build_opener(proxy_handler)
-
+        
         req = request.Request(
             "https://openrouter.ai/api/v1/chat/completions",
             data=data,
@@ -203,35 +182,54 @@ def call_ai(news_items):
                 "Content-Type": "application/json"
             }
         )
-        with opener.open(req, timeout=30) as resp:
-            return json.loads(resp.read().decode('utf-8'))
-
-    response = None
-    last_error = None
-    
-    for idx, proxy in enumerate(proxy_list):
-        try:
-            print(f"Trying proxy {idx+1}/{len(proxy_list)}: {proxy}")
-            result = try_request(proxy)
+        with request.urlopen(req, timeout=45) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
             if result and "choices" in result:
                 response = result["choices"][0]["message"]["content"].strip()
-                print(f"✅ Success with proxy: {proxy}")
-                break
+                print("✅ Direct access successful!")
+                return process_ai_response(response)
+    except Exception as e:
+        print(f"Direct access failed: {str(e)[:100]}")
+
+    # Если прямой доступ не работает - пробуем прокси из переменной
+    user_proxy = os.environ.get('PROXY_URL', '').strip()
+    if user_proxy:
+        try:
+            print(f"Trying proxy: {user_proxy}")
+            data = json.dumps({
+                "model": "google/gemma-4-26b-a4b-it:free",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 800,
+                "temperature": 0
+            }).encode('utf-8')
+            
+            proxy_handler = request.ProxyHandler({
+                'https': user_proxy,
+                'http': user_proxy
+            })
+            opener = request.build_opener(proxy_handler)
+            req = request.Request(
+                "https://openrouter.ai/api/v1/chat/completions",
+                data=data,
+                headers={
+                    "Authorization": f"Bearer {API_KEY}",
+                    "Content-Type": "application/json"
+                }
+            )
+            with opener.open(req, timeout=45) as resp:
+                result = json.loads(resp.read().decode('utf-8'))
+                if result and "choices" in result:
+                    response = result["choices"][0]["message"]["content"].strip()
+                    print(f"✅ Success with proxy: {user_proxy}")
+                    return process_ai_response(response)
         except Exception as e:
-            error_msg = str(e)
-            last_error = error_msg
-            if "403" in error_msg:
-                print(f"❌ Proxy {proxy}: 403 Forbidden")
-            elif "Connection" in error_msg or "Timeout" in error_msg:
-                print(f"❌ Proxy {proxy}: Connection error")
-            else:
-                print(f"❌ Proxy {proxy}: {error_msg[:100]}")
-            continue
+            print(f"Proxy failed: {str(e)[:100]}")
 
-    if response is None:
-        print(f"❌ All proxies failed. Last error: {last_error}")
-        return "нет"
+    print("❌ All connection methods failed")
+    return "нет"
 
+def process_ai_response(response):
+    """Пост-обработка ответа AI"""
     if response == 'нет':
         return 'нет'
 
@@ -261,7 +259,7 @@ def call_ai(news_items):
             return 'нет'
     else:
         return response
-    
+
 def format_news_beautiful(ai_response, news_items):
     """Красивое форматирование новостей"""
     now = datetime.now()
@@ -348,7 +346,7 @@ def run_analysis():
     return result
 
 def send_daily_report():
-    """Отправляет ежедневную сводку в 10:15 MSK"""
+    """Отправляет ежедневную сводку в группу"""
     print(f"📅 Running daily report at {datetime.now()}")
     result = run_analysis()
     result = result.replace(
@@ -358,9 +356,88 @@ def send_daily_report():
     send_telegram_message(CHAT_ID, result)
     print("✅ Daily report sent!")
 
+def get_updates(offset=None):
+    """Получение обновлений от Telegram"""
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+        if offset:
+            url += f"?offset={offset}"
+        req = request.Request(url)
+        with request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        print(f"Get updates error: {e}")
+        return None
+
+def process_updates():
+    """Обработка команд в личных сообщениях (для отладки)"""
+    last_update_id = 0
+    
+    print("🤖 Bot started. Listening for commands...")
+    print("Commands in private chat: /start, /analyse, /test, /chatid")
+    print("Daily reports will still be sent to groups as scheduled")
+    
+    while True:
+        try:
+            updates = get_updates(last_update_id + 1)
+            if updates and 'result' in updates:
+                for update in updates['result']:
+                    last_update_id = update['update_id']
+                    
+                    if 'message' in update:
+                        msg = update['message']
+                        chat_id = msg['chat']['id']
+                        chat_type = msg['chat'].get('type', 'private')
+                        text = msg.get('text', '')
+                        
+                        # ✅ Отвечаем ТОЛЬКО в личные сообщения
+                        if chat_type == 'private':
+                            print(f"📩 Private message: {text} from {chat_id}")
+                            
+                            if text == '/start':
+                                send_telegram_message(chat_id, 
+                                    "👋 <b>Бот для отслеживания кадровых изменений губернаторов РФ</b>\n\n"
+                                    "📡 Мониторинг 12 источников СМИ\n"
+                                    "🤖 AI-анализ новостей\n"
+                                    "📊 Ежедневные сводки\n\n"
+                                    "<b>Команды:</b>\n"
+                                    "/analyse — получить сводку новостей\n"
+                                    "/test — проверить работу бота\n"
+                                    "/chatid — показать ID чата"
+                                )
+                            elif text == '/test':
+                                send_telegram_message(chat_id, "✅ Бот работает!")
+                            elif text == '/analyse':
+                                send_telegram_message(chat_id, "⏳ <b>Анализирую новости из 12 источников...</b>")
+                                result = run_analysis()
+                                send_telegram_message(chat_id, result)
+                            elif text == '/chatid':
+                                send_telegram_message(chat_id, f"ID чата: <code>{chat_id}</code>")
+                            else:
+                                send_telegram_message(chat_id, 
+                                    "❌ Неизвестная команда.\n"
+                                    "Доступные команды:\n"
+                                    "/start — приветствие\n"
+                                    "/analyse — получить сводку\n"
+                                    "/test — проверить работу\n"
+                                    "/chatid — показать ID чата"
+                                )
+                        else:
+                            # Групповые сообщения логируем, но не отвечаем
+                            print(f"📢 Group message (ignored): {text[:50]} from {chat_id}")
+            
+            time.sleep(2)
+            
+        except Exception as e:
+            print(f"Process error: {e}")
+            time.sleep(5)
+
+# ===== Точка входа =====
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "daily":
+        # Режим ежедневной рассылки в группу
         send_daily_report()
     else:
-        print("Bot is ready for daily reports!")
-        print("To send daily report: python bot.py daily")
+        # Режим бота - обработка команд в ЛС (для отладки)
+        process_updates()
