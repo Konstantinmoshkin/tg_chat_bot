@@ -428,7 +428,7 @@ def scheduled_report():
 def start_scheduler():
     """Запускает планировщик в отдельном потоке"""
     # 07:15 UTC = 10:15 MSK (если сервер в UTC)
-    schedule.every().day.at("07:15").do(scheduled_report)
+    schedule.every().day.at("08:21").do(scheduled_report)
     print("⏰ Scheduler started. Daily report set for 07:15 UTC (10:15 MSK)")
     
     while True:
