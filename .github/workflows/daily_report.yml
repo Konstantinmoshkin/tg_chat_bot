@@ -2,8 +2,7 @@ name: Daily Governor Report
 
 on:
   schedule:
-    # Запуск в 10:15 MSK = 07:15 UTC (MSK = UTC+3)
-    - cron: '15 7 * * *'
+  - cron: '*/5 * * * *'  # каждые 5 минут
   workflow_dispatch:  # Для ручного запуска
 
 jobs:
