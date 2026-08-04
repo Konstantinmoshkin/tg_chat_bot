@@ -8,6 +8,7 @@ import sys
 import time
 import threading
 from flask import Flask, render_template_string
+import schedule  # Новая библиотека для планировщика
 
 # ===== Конфигурация =====
 TOKEN = os.environ.get('TOKEN')
@@ -404,15 +405,37 @@ def run_analysis():
 def send_daily_report():
     """Отправляет ежедневную сводку в группу"""
     print(f"📅 Running daily report at {datetime.now()}")
-    result = run_analysis()
-    result = result.replace(
-        "📰 <b>СВОДКА КАДРОВЫХ ИЗМЕНЕНИЙ ГУБЕРНАТОРОВ</b>",
-        "🌅 <b>ЕЖЕДНЕВНАЯ СВОДКА КАДРОВЫХ ИЗМЕНЕНИЙ ГУБЕРНАТОРОВ</b>"
-    )
-    if CHAT_ID:
-        send_telegram_message(CHAT_ID, result)
-    print("✅ Daily report sent!")
+    try:
+        result = run_analysis()
+        result = result.replace(
+            "📰 <b>СВОДКА КАДРОВЫХ ИЗМЕНЕНИЙ ГУБЕРНАТОРОВ</b>",
+            "🌅 <b>ЕЖЕДНЕВНАЯ СВОДКА КАДРОВЫХ ИЗМЕНЕНИЙ ГУБЕРНАТОРОВ</b>"
+        )
+        if CHAT_ID:
+            send_telegram_message(CHAT_ID, result)
+            print("✅ Daily report sent!")
+        else:
+            print("❌ CHAT_ID not set")
+    except Exception as e:
+        print(f"❌ Daily report error: {e}")
 
+# ===== ПЛАНИРОВЩИК =====
+def scheduled_report():
+    """Функция для планировщика"""
+    print(f"⏰ Scheduled report triggered at {datetime.now()}")
+    send_daily_report()
+
+def start_scheduler():
+    """Запускает планировщик в отдельном потоке"""
+    # 07:15 UTC = 10:15 MSK (если сервер в UTC)
+    schedule.every().day.at("07:15").do(scheduled_report)
+    print("⏰ Scheduler started. Daily report set for 07:15 UTC (10:15 MSK)")
+    
+    while True:
+        schedule.run_pending()
+        time.sleep(30)  # Проверять каждые 30 секунд
+
+# ===== Обработка команд =====
 def get_updates(offset=None):
     """Получение обновлений от Telegram"""
     try:
@@ -491,6 +514,13 @@ def process_updates():
             print(f"Process error: {e}")
             time.sleep(5)
 
+def start_bot():
+    """Запускает бота в отдельном потоке"""
+    try:
+        process_updates()
+    except Exception as e:
+        print(f"Bot thread error: {e}")
+
 # ===== Flask веб-сервер для Render =====
 @app.route('/')
 def index():
@@ -529,6 +559,7 @@ def index():
             <h1>🤖 Governor News Bot</h1>
             <p>Status: <span class="status">✅ Running</span></p>
             <p>Бот активен и слушает команды в Telegram.</p>
+            <p>📅 Ежедневные отчёты отправляются в 10:15 MSK</p>
             <h3>Доступные команды:</h3>
             <div class="commands">
                 /start — приветствие<br>
@@ -550,20 +581,18 @@ def ping():
     """Эндпоинт для keep-alive пинга"""
     return "OK", 200
 
-# ===== Главная функция =====
-def start_bot():
-    """Запускает бота в отдельном потоке"""
-    try:
-        process_updates()
-    except Exception as e:
-        print(f"Bot thread error: {e}")
-
+# ===== ГЛАВНАЯ ФУНКЦИЯ =====
 if __name__ == "__main__":
     # Проверяем аргументы командной строки
     if len(sys.argv) > 1 and sys.argv[1] == "daily":
-        # Режим ежедневной рассылки
+        # Режим ежедневной рассылки (для ручного запуска)
         send_daily_report()
     else:
+        # Запускаем планировщик в отдельном потоке
+        scheduler_thread = threading.Thread(target=start_scheduler, daemon=True)
+        scheduler_thread.start()
+        print("✅ Scheduler thread started")
+        
         # Запускаем бота в отдельном потоке
         bot_thread = threading.Thread(target=start_bot, daemon=True)
         bot_thread.start()
